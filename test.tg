@@ -1,4 +1,4 @@
 fn main() {
-  buf my_string = "Hello"; 
+  buf my_string str = "Hello"; 
   print(my_string);
 }
