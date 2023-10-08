@@ -24,6 +24,8 @@ class TokenKind:
     RETURN = "RETURN"
     SEMICOLON = "SEMICOLON"
     BUFFER = "BUFFER"
+    TYPE = "TYPE"
+    CONST = "CONST"
 
 
 class Token:
@@ -178,6 +180,10 @@ class Lexer:
                     return Token(TokenKind.RETURN)
                 case "buf":
                     return Token(TokenKind.BUFFER)
+                case "const":
+                    return Token(TokenKind.CONST)
+                case "void" | "byte" | "int" | "ptr":
+                    return Token(TokenKind.TYPE, self.buffer)
                 case _:
                     return Token(TokenKind.IDENTIFIER, self.buffer)
 
@@ -188,21 +194,107 @@ class Lexer:
         return _next
 
 
+class Emitter:
+    def __init__(self):
+        self.data_section = """
+# Tungsten Compiler
+# Generated data
+.section data
+.label _swap
+.alloc 2
+"""
+        self.text_section = """
+# Tungsten Compiler
+# Generated code
+.section text
+"""
+        self.constants = """
+# Tungsten Compiler
+# Constants
+.set void 0
+.set byte 1
+.set int 2
+.set ptr 2
+"""
+
+    def build(self):
+        return self.constants + "\n" + self.text_section + "\n" + self.data_section
+
+    def emit_const(self, name, value):
+        self.constants += f".set CONST_{name} {value}"
+
+    def emit_buffer(self, name, size):
+        self.data_section += f".label BUFFER_{name}"
+        self.data_section += f".alloc {size}"
+
+class Parser:
+    def __init__(self, lexer: Lexer) -> None:
+        self.lexer = lexer
+        self.emitter = Emitter()
+
+    def error(self, message: str):
+        print(f"PARSER ERROR: {message}")
+        exit(-3)
+
+    def next(self):
+        token = self.lexer.next()
+        while token.kind == TokenKind.EOL:
+            token = self.lexer.next()
+        return token
+
+    def expect(self, *token_kinds):
+        token = self.next()
+
+        if token.kind not in token_kinds:
+            self.error(f"Unexpected token `{token}`")
+        
+        return token
+
+    def parse(self):
+        while True:
+            match (self.next().kind):
+                case TokenKind.BUFFER:
+                    self.parse_buffer()
+                case TokenKind.CONST:
+                    self.parse_const()
+                case TokenKind.FUNCTION:
+                    pass
+                case TokenKind.IF:
+                    pass
+                case TokenKind.WHILE:
+                    pass
+                case TokenKind.IDENTIFIER:
+                    pass
+                case TokenKind.RETURN:
+                    pass
+                case TokenKind.EOF:
+                    break
+            self.expect(TokenKind.SEMICOLON)
+
+    def parse_buffer(self):
+        pass
+
+    def parse_const(self):
+        name = self.expect(TokenKind.IDENTIFIER)
+        self.expect(TokenKind.EQUALS)
+        value = self.expect(TokenKind.IDENTIFIER, TokenKind.BYTE, TokenKind.INT16, TokenKind.STRING, TokenKind.TYPE)
+        self.emitter.emit_const(name.value, value.value)
+
+
 def main(argv: list):
     if len(argv) != 1:
         print("ERROR: Expected 1 argument")
-        exit(-1)
+        return -1
 
     code = ""
     with open(argv[0], "r") as file:
         code = file.read()
 
     lexer = Lexer(code)
-    while True:
-        next = lexer.next()
-        print(next)
-        if next.kind == TokenKind.EOF:
-            break
+    parser = Parser(lexer)
+    parser.parse()
+    with open("out.asm", "w") as file:
+        file.write(parser.emitter.build())
 
 
 if __name__ == "__main__":

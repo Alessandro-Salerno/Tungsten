@@ -1,4 +1,2 @@
-fn main() void {
-  buf my_string str = "Hello"; 
-  print(my_string);
-}
+const MY_CONST = 20;
+
