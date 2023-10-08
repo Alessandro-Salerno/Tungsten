@@ -17,5 +17,8 @@
 .section data
 .label _swap
 .alloc 2
+
 .label BUFFER__GLOBAL_my_var
+.alloc 2
+.label BUFFER__GLOBAL0_my_var
 .alloc 2

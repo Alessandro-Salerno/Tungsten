@@ -1,2 +1,6 @@
 const MY_CONST = 20;
 buf my_var int;
+
+{
+  buf my_var int;
+}

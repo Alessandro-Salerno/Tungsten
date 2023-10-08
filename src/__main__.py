@@ -224,7 +224,7 @@ class Emitter:
         self.constants += f".set {name} {value}"
 
     def emit_buffer(self, name, size):
-        self.data_section += f".label {name}"
+        self.data_section += f"\n.label {name}"
         self.data_section += f"\n.alloc {size}"
 
 
@@ -233,6 +233,7 @@ class Scope:
         self.name = name
         self.symbols = {}
         self.parent = parent
+        self.unnamed_scope_cout = 0
 
     def map_variable(self, name):
         self.symbols.__setitem__(name, f"BUFFER_{self.name}_{name}")
@@ -254,6 +255,11 @@ class Scope:
         if self.parent != None:
             return self.parent.get_sym(name)
         return None
+
+    def new_subscope(self):
+        name = f"{self.name}{self.unnamed_scope_cout}"
+        self.unnamed_scope_cout += 1
+        return name
 
 
 class FunctionSignature:
@@ -290,6 +296,7 @@ class Parser:
 
     def parse(self):
         while True:
+            require_semicolon = True
             match (self.next().kind):
                 case TokenKind.BUFFER:
                     self.parse_buffer()
@@ -306,12 +313,16 @@ class Parser:
                 case TokenKind.RETURN:
                     pass
                 case TokenKind.LSCOPE:
-                    pass
+                    self.parse_new_scope()
+                    require_semicolon = False
                 case TokenKind.RSCOPE:
-                    pass
+                    self.parse_end_scope()
+                    require_semicolon = False
                 case TokenKind.EOF:
                     break
-            self.expect(TokenKind.SEMICOLON)
+
+            if require_semicolon:
+                self.expect(TokenKind.SEMICOLON)
 
     def parse_buffer(self):
         name = self.expect(TokenKind.IDENTIFIER)
@@ -336,6 +347,16 @@ class Parser:
             self.error(f"Symbol `{name.value}` already declared in scope `{self.scope.name}`")
         self.scope.map_const(name.value)
         self.emitter.emit_const(self.scope.get_sym(name.value), value.value)
+
+    def parse_new_scope(self):
+        name = self.signature.name if self.signature != None else self.scope.new_subscope()
+        scope = Scope(name, self.scope)
+        self.scope = scope
+
+    def parse_end_scope(self):
+        if self.signature != None and self.signature.name == self.scope.name:
+            self.signature = None
+        self.scope = self.scope.parent
 
 
 def main(argv: list):
