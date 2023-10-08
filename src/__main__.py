@@ -221,16 +221,54 @@ class Emitter:
         return self.constants + "\n" + self.text_section + "\n" + self.data_section
 
     def emit_const(self, name, value):
-        self.constants += f".set CONST_{name} {value}"
+        self.constants += f".set {name} {value}"
 
     def emit_buffer(self, name, size):
-        self.data_section += f".label BUFFER_{name}"
-        self.data_section += f".alloc {size}"
+        self.data_section += f".label {name}"
+        self.data_section += f"\n.alloc {size}"
+
+
+class Scope:
+    def __init__(self, name, parent) -> None:
+        self.name = name
+        self.symbols = {}
+        self.parent = parent
+
+    def map_variable(self, name):
+        self.symbols.__setitem__(name, f"BUFFER_{self.name}_{name}")
+
+    def map_const(self, name):
+        self.symbols.__setitem__(name, f"CONST_{self.name}_{name}")
+
+    def has_sym_strict(self, name):
+        return name in self.symbols
+
+    def has_sym(self, name):
+        if self.has_sym_strict(name):
+            return True
+        return self.parent != None and self.parent.has_sym(name)
+
+    def get_sym(self, name):
+        if self.has_sym_strict(name):
+            return self.symbols[name]
+        if self.parent != None:
+            return self.parent.get_sym(name)
+        return None
+
+
+class FunctionSignature:
+    def __init__(self, name, args, ret_type) -> None:
+        self.name = name
+        self.args = args
+        self.ret_type = ret_type
+
 
 class Parser:
     def __init__(self, lexer: Lexer) -> None:
         self.lexer = lexer
         self.emitter = Emitter()
+        self.signature = None
+        self.scope = Scope("_GLOBAL", None)
 
     def error(self, message: str):
         print(f"PARSER ERROR: {message}")
@@ -267,18 +305,37 @@ class Parser:
                     pass
                 case TokenKind.RETURN:
                     pass
+                case TokenKind.LSCOPE:
+                    pass
+                case TokenKind.RSCOPE:
+                    pass
                 case TokenKind.EOF:
                     break
             self.expect(TokenKind.SEMICOLON)
 
     def parse_buffer(self):
-        pass
+        name = self.expect(TokenKind.IDENTIFIER)
+        type = self.expect(TokenKind.TYPE)
+        if self.scope.has_sym_strict(name.value):
+            self.error(f"Symbol `{name.value}` already declared in scope `{self.scope.name}`")
+        self.scope.map_variable(name.value)
+        type_size = 0
+        match (type.value):
+            case "byte":
+                type_size = 1
+            case "int" | "ptr":
+                type_size = 2
+
+        self.emitter.emit_buffer(self.scope.get_sym(name.value), type_size)
 
     def parse_const(self):
         name = self.expect(TokenKind.IDENTIFIER)
         self.expect(TokenKind.EQUALS)
         value = self.expect(TokenKind.IDENTIFIER, TokenKind.BYTE, TokenKind.INT16, TokenKind.STRING, TokenKind.TYPE)
-        self.emitter.emit_const(name.value, value.value)
+        if self.scope.has_sym_strict(name.value):
+            self.error(f"Symbol `{name.value}` already declared in scope `{self.scope.name}`")
+        self.scope.map_const(name.value)
+        self.emitter.emit_const(self.scope.get_sym(name.value), value.value)
 
 
 def main(argv: list):

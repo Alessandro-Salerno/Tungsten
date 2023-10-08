@@ -5,7 +5,7 @@
 .set byte 1
 .set int 2
 .set ptr 2
-.set CONST_MY_CONST 20
+.set CONST__GLOBAL_MY_CONST 20
 
 # Tungsten Compiler
 # Generated code
@@ -16,4 +16,6 @@
 # Generated data
 .section data
 .label _swap
+.alloc 2
+.label BUFFER__GLOBAL_my_var
 .alloc 2
