@@ -1,4 +1,5 @@
 import sys
+from collections import defaultdict
 
 
 class TokenKind:
@@ -26,6 +27,7 @@ class TokenKind:
     BUFFER = "BUFFER"
     TYPE = "TYPE"
     CONST = "CONST"
+    ASM = "ASM" 
 
 
 class Token:
@@ -184,6 +186,8 @@ class Lexer:
                     return Token(TokenKind.CONST)
                 case "void" | "byte" | "int" | "ptr":
                     return Token(TokenKind.TYPE, self.buffer)
+                case "asm":
+                    return Token(TokenKind.ASM)
                 case _:
                     return Token(TokenKind.IDENTIFIER, self.buffer)
 
@@ -201,6 +205,10 @@ class Emitter:
 # Generated data
 .section data
 .label _swap
+.alloc 2
+.label __TUNGSTEN_FUNCTION_JBA
+.alloc 2
+.label __TUNGSTEN_FUNCION_RETVAL
 .alloc 2
 """
         self.text_section = """
@@ -224,8 +232,20 @@ class Emitter:
         self.constants += f".set {name} {value}"
 
     def emit_buffer(self, name, size):
-        self.data_section += f"\n.label {name}"
+        self.emit_data_label(name)
+        self.emit_alloc(size)
+
+    def emit_data_label(self, label):
+        self.data_section += f"\n.label {label}"
+
+    def emit_text_label(self, label):
+        self.text_section += f"\n.label {label}"
+        
+    def emit_alloc(self, size):
         self.data_section += f"\n.alloc {size}"
+
+    def emit_asm_text(self, code):
+        self.text_section += f"\n{code}"
 
 
 class Scope:
@@ -234,12 +254,22 @@ class Scope:
         self.symbols = {}
         self.parent = parent
         self.unnamed_scope_cout = 0
+        self.functions = []
+
+    def header(self):
+        return f"__TUNGSTEN_START_{self.name}"
+
+    def footer(self):
+        return f"__TUNGSTEN_END_{self.name}"
 
     def map_variable(self, name):
         self.symbols.__setitem__(name, f"BUFFER_{self.name}_{name}")
 
     def map_const(self, name):
         self.symbols.__setitem__(name, f"CONST_{self.name}_{name}")
+
+    def map_function(self, name):
+        self.symbols.__setitem__(name, f"FUNCTION_{self.name}_{name}")
 
     def has_sym_strict(self, name):
         return name in self.symbols
@@ -261,12 +291,24 @@ class Scope:
         self.unnamed_scope_cout += 1
         return name
 
+    def add_function(self, signature):
+        self.functions.append(signature)
+
+
+class MemoryManager:
+    def __init__(self) -> None:
+        self.sym_by_size = defaultdict(lambda: [])
+
+    def add_map(self, sym, size):
+        self.sym_by_size[size].append(sym)
+
 
 class FunctionSignature:
     def __init__(self, name, args, ret_type) -> None:
         self.name = name
         self.args = args
         self.ret_type = ret_type
+        self.mem = MemoryManager()
 
 
 class Parser:
@@ -275,6 +317,7 @@ class Parser:
         self.emitter = Emitter()
         self.signature = None
         self.scope = Scope("_GLOBAL", None)
+        self.buffer_sizes = []
 
     def error(self, message: str):
         print(f"PARSER ERROR: {message}")
@@ -303,7 +346,8 @@ class Parser:
                 case TokenKind.CONST:
                     self.parse_const()
                 case TokenKind.FUNCTION:
-                    pass
+                    self.parse_function()
+                    require_semicolon = False
                 case TokenKind.IF:
                     pass
                 case TokenKind.WHILE:
@@ -318,26 +362,51 @@ class Parser:
                 case TokenKind.RSCOPE:
                     self.parse_end_scope()
                     require_semicolon = False
+                case TokenKind.ASM:
+                    self.parse_asm()
                 case TokenKind.EOF:
                     break
 
             if require_semicolon:
                 self.expect(TokenKind.SEMICOLON)
+        
+        if self.scope.name != "_GLOBAL":
+            self.error("Code does not end in _GLOBAL scope")
+        
+        self.buffer_sizes = sorted(self.buffer_sizes, reverse=True)
+        for size in self.buffer_sizes:
+            for function in self.scope.functions:
+                if size not in function.mem.sym_by_size:
+                    continue
+                if len(function.mem.sym_by_size[size]) == 0:
+                    continue
+                sym = function.mem.sym_by_size[size].pop(0)
+                self.emitter.emit_data_label(sym)
+            self.emitter.emit_alloc(size)
+
 
     def parse_buffer(self):
         name = self.expect(TokenKind.IDENTIFIER)
-        type = self.expect(TokenKind.TYPE)
+        type = self.expect(TokenKind.TYPE, TokenKind.BYTE)
         if self.scope.has_sym_strict(name.value):
             self.error(f"Symbol `{name.value}` already declared in scope `{self.scope.name}`")
         self.scope.map_variable(name.value)
         type_size = 0
-        match (type.value):
-            case "byte":
-                type_size = 1
-            case "int" | "ptr":
-                type_size = 2
+        match (type.kind):
+            case TokenKind.TYPE:
+                match (type.value):
+                    case "byte":
+                        type_size = 1
+                    case "int" | "ptr":
+                        type_size = 2
+            case TokenKind.BYTE:
+                type_size = type.value
 
-        self.emitter.emit_buffer(self.scope.get_sym(name.value), type_size)
+        if self.signature == None:
+            self.emitter.emit_buffer(self.scope.get_sym(name.value), type_size)
+            return
+
+        self.signature.mem.add_map(self.scope.get_sym(name.value), type_size)
 
     def parse_const(self):
         name = self.expect(TokenKind.IDENTIFIER)
@@ -350,13 +419,39 @@ class Parser:
 
     def parse_new_scope(self):
         name = self.signature.name if self.signature != None else self.scope.new_subscope()
+        if name == "main":
+            self.emitter.emit_text_label("_main")
         scope = Scope(name, self.scope)
         self.scope = scope
+        self.emitter.emit_text_label(self.scope.header())
 
     def parse_end_scope(self):
         if self.signature != None and self.signature.name == self.scope.name:
             self.signature = None
+        self.emitter.emit_text_label(self.scope.footer())
         self.scope = self.scope.parent
+
+    def parse_function(self):
+        if self.scope.name != "_GLOBAL":
+            self.error("Unexpected nested function")
+        name = self.expect(TokenKind.IDENTIFIER)
+        type = None
+        next = self.expect(TokenKind.LPAREN, TokenKind.TYPE)
+        match (next.kind):
+            case TokenKind.LPAREN:
+                # Function has arguments -- TO BE IMPLEMENTED
+                pass
+
+            case TokenKind.TYPE:
+                type = next.value
+                self.signature = FunctionSignature(name.value, [], type)
+        self.scope.functions.append(self.signature)
+
+    def parse_asm(self):
+        code = self.expect(TokenKind.STRING)
+        if self.signature == None:
+            self.error("Unexpected Assembly code outside function")
+        self.emitter.emit_asm_text(code.value)
 
 
 def main(argv: list):

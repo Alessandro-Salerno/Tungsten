@@ -1,6 +1,5 @@
-const MY_CONST = 20;
-buf my_var int;
-
-{
-  buf my_var int;
+fn main void {
+  asm "ldx 0x50";
+  asm "out";
 }
+
