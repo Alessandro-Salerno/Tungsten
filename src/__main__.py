@@ -342,7 +342,7 @@ class Parser:
         line = self.lexer.lines[target.lnum].lstrip(" ")
         print(f"PARSER ERROR: {message}")
         print(f"{target.lnum} |    {line}")
-        print(' ' * (len(str(target.lnum)) + 4 + target.offset + 3) + "^" * target.length)
+        print(' ' * (len(str(target.lnum)) + 4 + target.offset + line[0:target.offset].count(" ") + 3) + "^" * target.length)
         exit(-3)
 
     def next(self):

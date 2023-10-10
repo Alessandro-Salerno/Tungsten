@@ -33,9 +33,9 @@ out
 .label __TUNGSTEN_FUNCION_RETVAL
 .alloc 2
 
-.label BUFFER_main_testaw
-.alloc 2
 .label BUFFER_add_bytes_a
 .alloc 1
 .label BUFFER_add_bytes_b
 .alloc 1
+.label BUFFER_main_testaw
+.alloc 2
