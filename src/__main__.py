@@ -29,12 +29,16 @@ class TokenKind:
     CONST = "CONST"
     ASM = "ASM" 
     COMMA = "COMMA"
+    NORET = "NORET"
 
 
 class Token:
-    def __init__(self, kind: str, value=None) -> None:
+    def __init__(self, kind: str, value=None, lnum=None, length=None, offset=None) -> None:
         self.kind = kind
         self.value = value
+        self.lnum = lnum
+        self.length = length
+        self.offset = offset
 
     def __str__(self) -> str:
         return f"Token({self.kind}, {self.value})"
@@ -43,19 +47,21 @@ class Token:
 class Lexer:
     def __init__(self, code: str):
         self.code = code
+        self.lines = self.code.split("\n")
         self.index = 0
         self.buffer = ""
         self.line_num = 0
         self.line_offset = 0
         self.line_change = 0
 
+    def token(self, kind, value=None):
+        return Token(kind, value, self.line_num, self.line_change, self.line_offset)
+
     def error(self, message: str):
-        lines = self.code.split("\n")
-        line = lines[self.line_num]
-        n_spaces =  line.count(" ") - 1
+        line = self.lines[self.line_num].lstrip(" ")
         print(f"SYNTAX ERROR: {message}")
-        print(f"{self.line_num}|    {line}")
-        print(' ' * (len(str(self.line_num)) + 4 + n_spaces + self.line_offset) + "^" * self.line_change)
+        print(f"{self.line_num} |    {line}")
+        print(' ' * (len(str(self.line_num)) + 4 + self.line_offset + 1) + "^" * self.line_change)
         exit(-2)
 
     def unknown_token_error(self, token):
@@ -83,23 +89,22 @@ class Lexer:
 
     def _next_by_sym(self) -> Token | None:
         basic = {
-            "+": Token(TokenKind.PLUS),
-            "*": Token(TokenKind.TIMES),
-            "-": Token(TokenKind.MINUS),
-            "/": Token(TokenKind.DIVIDE),
-            "%": Token(TokenKind.MODULO),
-            "(": Token(TokenKind.LPAREN),
-            ")": Token(TokenKind.RPAREN),
-            "{": Token(TokenKind.LSCOPE),
-            "}": Token(TokenKind.RSCOPE),
-            "=": Token(TokenKind.EQUALS),
-            ";": Token(TokenKind.SEMICOLON),
-            ",": Token(TokenKind.COMMA),
+            "+": TokenKind.PLUS,
+            "*": TokenKind.TIMES,
+            "-": TokenKind.MINUS,
+            "/": TokenKind.DIVIDE,
+            "%": TokenKind.MODULO,
+            "(": TokenKind.LPAREN,
+            ")": TokenKind.RPAREN,
+            "{": TokenKind.LSCOPE,
+            "}": TokenKind.RSCOPE,
+            ";": TokenKind.SEMICOLON,
+            ",": TokenKind.COMMA,
         }
         if  self.current() in basic.keys():
             t = basic[self.current()]
             self.advance()
-            return t
+            return self.token(t)
 
         match (self.current()):
             case "0":
@@ -113,7 +118,7 @@ class Lexer:
                         try:
                             value = int(self.buffer, 16)
                             kind = TokenKind.BYTE if value <= 255 else TokenKind.INT16
-                            return Token(kind, value)
+                            return self.token(kind, value)
                         except:
                             self.invalid_literal_for(self.buffer, "hex")
 
@@ -125,31 +130,37 @@ class Lexer:
                         try:
                             value = int(self.buffer, 2)
                             kind = TokenKind.BYTE if value <= 255 else TokenKind.INT16
-                            return Token(kind, value)
+                            return self.token(kind, value)
                         except:
                             self.invalid_literal_for(self.buffer, "bin")
 
             case '"':
                 self.advance()
-                while self.current() != '"' and self.current() != '':
+                while self.current() != '"' and self.current() != '' and self.current() != "\n":
                     self.buffer += self.current()
                     self.advance()
                 match (self.current()):
                     case '"':
                         self.advance()
-                        return Token(TokenKind.STRING, self.buffer)
-                    case '':
+                        return self.token(TokenKind.STRING, self.buffer)
+                    case '' | "\n":
                         self.error("Expected end of string")
 
             case "\n":
                 self.line_num += 1
                 self.line_offset = 0
                 self.advance()
-                return Token(TokenKind.EOL)
+                self.line_change = 0
+                return self.token(TokenKind.EOL)
+
+            case "#":
+                while self.current() != "\n" and self.current() != "":
+                    self.advance()
+                return self.token(TokenKind.EOL)
 
     def _next(self) -> Token:
         if self.index >= len(self.code):
-            return Token(TokenKind.EOF, None)
+            return self.token(TokenKind.EOF, None)
 
         while self.current() == " " or self.current() == "\t":
             self.advance()
@@ -171,27 +182,29 @@ class Lexer:
         if self.token_grabbed():
             if self.buffer.isdecimal():
                 value = int(self.buffer)
-                return Token(TokenKind.BYTE if value <= 255 else TokenKind.INT16,
+                return self.token(TokenKind.BYTE if value <= 255 else TokenKind.INT16,
                                 value)
             match (self.buffer):
                 case "fn":
-                    return Token(TokenKind.FUNCTION)
+                    return self.token(TokenKind.FUNCTION)
                 case "while":
-                    return Token(TokenKind.WHILE)
+                    return self.token(TokenKind.WHILE)
                 case "if":
-                    return Token(TokenKind.IF)
+                    return self.token(TokenKind.IF)
                 case "ret":
-                    return Token(TokenKind.RETURN)
+                    return self.token(TokenKind.RETURN)
                 case "buf":
-                    return Token(TokenKind.BUFFER)
+                    return self.token(TokenKind.BUFFER)
                 case "const":
-                    return Token(TokenKind.CONST)
+                    return self.token(TokenKind.CONST)
                 case "void" | "byte" | "int" | "ptr":
-                    return Token(TokenKind.TYPE, self.buffer)
+                    return self.token(TokenKind.TYPE, self.buffer)
                 case "asm":
-                    return Token(TokenKind.ASM)
+                    return self.token(TokenKind.ASM)
+                case "noret":
+                    return self.token(TokenKind.NORET)
                 case _:
-                    return Token(TokenKind.IDENTIFIER, self.buffer)
+                    return self.token(TokenKind.IDENTIFIER, self.buffer)
 
     def next(self):
         self.clear_buffer()
@@ -264,6 +277,9 @@ class Scope:
     def footer(self):
         return f"__TUNGSTEN_END_{self.name}"
 
+    def map_generic(self, key, value):
+        self.symbols.__setitem__(key, value)
+
     def map_variable(self, name):
         self.symbols.__setitem__(name, f"BUFFER_{self.name}_{name}")
 
@@ -280,6 +296,7 @@ class Scope:
         if self.has_sym_strict(name):
             return True
         return self.parent != None and self.parent.has_sym(name)
+
 
     def get_sym(self, name):
         if self.has_sym_strict(name):
@@ -311,12 +328,14 @@ class FunctionSignature:
         self.args = args
         self.ret_type = ret_type
         self.mem = MemoryManager()
+        self.returned = False
 
 
 class Variable:
-    def __init__(self, name, size) -> None:
+    def __init__(self, name, size, token) -> None:
         self.name = name
         self.size = size
+        self.token = token
 
 
 class Parser:
@@ -326,15 +345,21 @@ class Parser:
         self.signature = None
         self.scope = Scope("_GLOBAL", None)
         self.buffer_sizes = []
+        self._cur = None
 
-    def error(self, message: str):
+    def error(self, message: str, token=None):
+        target = token if token != None else self._cur
+        line = self.lexer.lines[target.lnum].lstrip(" ")
         print(f"PARSER ERROR: {message}")
+        print(f"{target.lnum} |    {line}")
+        print(' ' * (len(str(target.lnum)) + 4 + target.offset + 3) + "^" * target.length)
         exit(-3)
 
     def next(self):
         token = self.lexer.next()
         while token.kind == TokenKind.EOL:
             token = self.lexer.next()
+        self._cur = token
         return token
 
     def expect(self, *token_kinds):
@@ -372,6 +397,8 @@ class Parser:
                     require_semicolon = False
                 case TokenKind.ASM:
                     self.parse_asm()
+                case TokenKind.NORET:
+                    self.parse_noret()
                 case TokenKind.EOF:
                     break
 
@@ -416,12 +443,17 @@ class Parser:
         scope = Scope(name, self.scope)
         self.scope = scope
         if self.signature != None:
+            self.scope.map_generic("__ret", "__TUNGSTEN_FUNCION_RETVAL")
+            self.scope.map_generic("__start", self.scope.header())
+            self.scope.map_generic("__end", self.scope.footer())
             for arg in self.signature.args:
                 self._alloc_var(arg)
         self.emitter.emit_text_label(self.scope.header())
 
     def parse_end_scope(self):
         if self.signature != None and self.signature.name == self.scope.name:
+            if self.signature.ret_type != "void" and not self.signature.returned and self.signature.name == self.scope.name:
+                self.error(f"Function `{self.signature.name}` of type `{self.signature.ret_type}` does not return any value")
             self.signature = None
         self.emitter.emit_text_label(self.scope.footer())
         self.scope = self.scope.parent
@@ -454,7 +486,12 @@ class Parser:
         code = self.expect(TokenKind.STRING)
         if self.signature == None:
             self.error("Unexpected Assembly code outside function")
-        self.emitter.emit_asm_text(code.value)
+        self.emitter.emit_asm_text(self._parse_asm(code.value))
+
+    def parse_noret(self):
+        if self.signature == None:
+            self.error("Unexpected `noret` outside of function")
+        self.signature.returned = True
 
     def _collect_buf(self):
         name = self.expect(TokenKind.IDENTIFIER)
@@ -470,13 +507,13 @@ class Parser:
             case TokenKind.BYTE:
                 type_size = type.value
 
-        return Variable(name.value, type_size)
+        return Variable(name.value, type_size, name)
 
     def _alloc_var(self, var):
         if self.scope.has_sym_strict(var.name):
-            self.error(f"Symbol `{var.name}` already declared in scope `{self.scope.name}`")
+            self.error(f"Symbol `{var.name}` already declared in scope `{self.scope.name}`", var.token)
         if var.size == 0:
-            self.error(f"Cannot allocate symbol `{var.name}` of type `void`")
+            self.error(f"Cannot allocate symbol `{var.name}` of type `void`", var.token)
 
         self.scope.map_variable(var.name)
 
@@ -487,6 +524,24 @@ class Parser:
         self.buffer_sizes.append(var.size)
         self.signature.mem.add_map(self.scope.get_sym(var.name), var.size)
 
+    def _parse_asm(self, code):
+        i = 0
+        out = ""
+        while i < len(code):
+            if code[i] == "%":
+                i += 1
+                var_name = ""
+                while i < len(code) and (code[i].isalnum() or code[i] == "_"):
+                    var_name += code[i]
+                    i += 1
+                if not self.scope.has_sym(var_name):
+                    self.error(f"Undeclared symbol `{var_name}` used in Embedded Assembly code")
+                sym = self.scope.get_sym(var_name)
+                out += sym
+                continue
+            out += code[i]
+            i += 1
+        return out
 
 
 def main(argv: list):

@@ -1,9 +1,15 @@
-fn add(a int, b int) int {
-
+fn add_bytes(a byte, b byte) byte {
+  asm "ldrx %a";
+  asm "ldry %b";
+  asm "addxy";
+  asm "strx %__ret";
+  noret;
 }
 
+# comment
+# another comment
 fn main void {
-  buf test int;
+  buf testaw int;
   asm "ldx 0x50";
   asm "out";
 }
