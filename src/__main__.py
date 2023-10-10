@@ -314,20 +314,11 @@ class Scope:
         self.functions.append(signature)
 
 
-class MemoryManager:
-    def __init__(self) -> None:
-        self.sym_by_size = defaultdict(lambda: [])
-
-    def add_map(self, sym, size):
-        self.sym_by_size[size].append(sym)
-
-
 class FunctionSignature:
     def __init__(self, name, args, ret_type) -> None:
         self.name = name
         self.args = args
         self.ret_type = ret_type
-        self.mem = MemoryManager()
         self.returned = False
 
 
@@ -344,7 +335,6 @@ class Parser:
         self.emitter = Emitter()
         self.signature = None
         self.scope = Scope("_GLOBAL", None)
-        self.buffer_sizes = []
         self._cur = None
 
     def error(self, message: str, token=None):
@@ -407,21 +397,6 @@ class Parser:
         
         if self.scope.name != "_GLOBAL":
             self.error("Code does not end in _GLOBAL scope")
-        
-        self.buffer_sizes = sorted(self.buffer_sizes, reverse=True)
-        for size in self.buffer_sizes:
-            save_size = False
-            for function in self.scope.functions:
-                if size not in function.mem.sym_by_size:
-                    continue
-                if len(function.mem.sym_by_size[size]) == 0:
-                    continue
-                sym = function.mem.sym_by_size[size].pop(0)
-                self.emitter.emit_data_label(sym)
-                save_size = True
-            if save_size:
-                self.emitter.emit_alloc(size)
-
 
     def parse_buffer(self):
         var = self._collect_buf()
@@ -513,17 +488,11 @@ class Parser:
         if self.scope.has_sym_strict(var.name):
             self.error(f"Symbol `{var.name}` already declared in scope `{self.scope.name}`", var.token)
         if var.size == 0:
-            self.error(f"Cannot allocate symbol `{var.name}` of type `void`", var.token)
+            self.error(f"Cannot allocate symbol `{var.name}` of type `void`")
 
         self.scope.map_variable(var.name)
-
-        if self.signature == None:
-            self.emitter.emit_buffer(self.scope.get_sym(var.name), var.size)
-            return
-
-        self.buffer_sizes.append(var.size)
-        self.signature.mem.add_map(self.scope.get_sym(var.name), var.size)
-
+        self.emitter.emit_buffer(self.scope.get_sym(var.name), var.size)
+            
     def _parse_asm(self, code):
         i = 0
         out = ""
