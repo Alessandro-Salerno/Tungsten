@@ -1,4 +1,9 @@
+fn add(a int, b int) int {
+
+}
+
 fn main void {
+  buf test int;
   asm "ldx 0x50";
   asm "out";
 }

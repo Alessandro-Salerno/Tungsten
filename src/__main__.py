@@ -28,6 +28,7 @@ class TokenKind:
     TYPE = "TYPE"
     CONST = "CONST"
     ASM = "ASM" 
+    COMMA = "COMMA"
 
 
 class Token:
@@ -93,6 +94,7 @@ class Lexer:
             "}": Token(TokenKind.RSCOPE),
             "=": Token(TokenKind.EQUALS),
             ";": Token(TokenKind.SEMICOLON),
+            ",": Token(TokenKind.COMMA),
         }
         if  self.current() in basic.keys():
             t = basic[self.current()]
@@ -311,6 +313,12 @@ class FunctionSignature:
         self.mem = MemoryManager()
 
 
+class Variable:
+    def __init__(self, name, size) -> None:
+        self.name = name
+        self.size = size
+
+
 class Parser:
     def __init__(self, lexer: Lexer) -> None:
         self.lexer = lexer
@@ -375,6 +383,7 @@ class Parser:
         
         self.buffer_sizes = sorted(self.buffer_sizes, reverse=True)
         for size in self.buffer_sizes:
+            save_size = False
             for function in self.scope.functions:
                 if size not in function.mem.sym_by_size:
                     continue
@@ -382,32 +391,15 @@ class Parser:
                     continue
                 sym = function.mem.sym_by_size[size].pop(0)
                 self.emitter.emit_data_label(sym)
-            self.emitter.emit_alloc(size)
+                save_size = True
+            if save_size:
+                self.emitter.emit_alloc(size)
 
 
     def parse_buffer(self):
-        name = self.expect(TokenKind.IDENTIFIER)
-        type = self.expect(TokenKind.TYPE, TokenKind.BYTE)
-        if self.scope.has_sym_strict(name.value):
-            self.error(f"Symbol `{name.value}` already declared in scope `{self.scope.name}`")
-        self.scope.map_variable(name.value)
-        type_size = 0
-        match (type.kind):
-            case TokenKind.TYPE:
-                match (type.value):
-                    case "byte":
-                        type_size = 1
-                    case "int" | "ptr":
-                        type_size = 2
-            case TokenKind.BYTE:
-                type_size = type.value
-
-        if self.signature == None:
-            self.emitter.emit_buffer(self.scope.get_sym(name.value), type_size)
-            return
-
-        self.signature.mem.add_map(self.scope.get_sym(name.value), type_size)
-
+        var = self._collect_buf()
+        self._alloc_var(var)
+        
     def parse_const(self):
         name = self.expect(TokenKind.IDENTIFIER)
         self.expect(TokenKind.EQUALS)
@@ -423,6 +415,9 @@ class Parser:
             self.emitter.emit_text_label("_main")
         scope = Scope(name, self.scope)
         self.scope = scope
+        if self.signature != None:
+            for arg in self.signature.args:
+                self._alloc_var(arg)
         self.emitter.emit_text_label(self.scope.header())
 
     def parse_end_scope(self):
@@ -440,7 +435,15 @@ class Parser:
         match (next.kind):
             case TokenKind.LPAREN:
                 # Function has arguments -- TO BE IMPLEMENTED
-                pass
+                self.signature = FunctionSignature(name.value, [], None)
+
+                while True:
+                    var = self._collect_buf()
+                    self.signature.args.append(var)
+                    sep = self.expect(TokenKind.RPAREN, TokenKind.COMMA)
+                    if sep.kind == TokenKind.RPAREN:
+                        break
+                self.signature.ret_type = self.expect(TokenKind.TYPE).value
 
             case TokenKind.TYPE:
                 type = next.value
@@ -452,6 +455,38 @@ class Parser:
         if self.signature == None:
             self.error("Unexpected Assembly code outside function")
         self.emitter.emit_asm_text(code.value)
+
+    def _collect_buf(self):
+        name = self.expect(TokenKind.IDENTIFIER)
+        type = self.expect(TokenKind.TYPE, TokenKind.BYTE)
+        type_size = 0
+        match (type.kind):
+            case TokenKind.TYPE:
+                match (type.value):
+                    case "byte":
+                        type_size = 1
+                    case "int" | "ptr":
+                        type_size = 2
+            case TokenKind.BYTE:
+                type_size = type.value
+
+        return Variable(name.value, type_size)
+
+    def _alloc_var(self, var):
+        if self.scope.has_sym_strict(var.name):
+            self.error(f"Symbol `{var.name}` already declared in scope `{self.scope.name}`")
+        if var.size == 0:
+            self.error(f"Cannot allocate symbol `{var.name}` of type `void`")
+
+        self.scope.map_variable(var.name)
+
+        if self.signature == None:
+            self.emitter.emit_buffer(self.scope.get_sym(var.name), var.size)
+            return
+
+        self.buffer_sizes.append(var.size)
+        self.signature.mem.add_map(self.scope.get_sym(var.name), var.size)
+
 
 
 def main(argv: list):
